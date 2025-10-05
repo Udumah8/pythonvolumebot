@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-StealthVolume CLI - Fixed Version (v4.2.1)
+StealthVolume CLI - Fixed Version (v4.2.2)
 Advanced Solana Trading Bot with Jupiter API Integration
 Trending Optimization for DEX Visibility
 """
@@ -15,7 +15,7 @@ import yaml
 import aiohttp
 import pandas as pd
 import numpy as np
-import torch  # Note: Retained but appears unused; consider removing if no ML training is implemented
+import torch
 import torch.nn as nn
 from solders.keypair import Keypair
 from solders.pubkey import Pubkey
@@ -74,7 +74,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Enums and Dataclasses (unchanged)
+# Enums and Dataclasses
 class TradeType(Enum):
     BUY = "buy"
     SELL = "sell"
@@ -182,7 +182,7 @@ class SecurityConfig:
 @dataclass
 class JupiterConfig:
     base_url: str = "https://lite-api.jup.ag"
-    swap_version: str = "v1"  # Updated to v1 per 2025 docs
+    swap_version: str = "v1"
     price_version: str = "v3"
     tokens_version: str = "v2"
     enable_price_api: bool = True
@@ -251,11 +251,11 @@ class TradeConfig:
     hybrid_mm_config: HybridMMConfig = field(default_factory=HybridMMConfig)
     funding_config: FundingConfig = field(default_factory=FundingConfig)
     withdraw_config: WithdrawConfig = field(default_factory=WithdrawConfig)
-    version: str = "4.2.1"  # Updated version for fix
+    version: str = "4.2.2"
     created_at: str = field(default_factory=lambda: time.strftime("%Y-%m-%d %H:%M:%S"))
 
 
-# Configuration Management (fixed robust wallets loading)
+# Configuration Management with robust wallet handling
 class ConfigManager:
     @staticmethod
     def load_config(config_source: str = 'auto', config_path: str = 'config.yaml') -> TradeConfig:
@@ -282,12 +282,21 @@ class ConfigManager:
             webhook_url=os.getenv('STEALTH_TRENDING_WEBHOOK_URL', '')
         )
 
+        # FIXED: Ensure wallets is always a list
+        wallets_env = os.getenv('STEALTH_WALLETS', '[]')
+        try:
+            wallets = json.loads(wallets_env)
+            if not isinstance(wallets, list):
+                wallets = []
+        except:
+            wallets = []
+
         config = TradeConfig(
             rpc_url=os.getenv('STEALTH_RPC_URL', 'https://api.mainnet-beta.solana.com'),
-            jupiter_api_key=os.getenv('STEALTH_JUPITER_API_KEY', ''),  # Not required for lite-api
+            jupiter_api_key=os.getenv('STEALTH_JUPITER_API_KEY', ''),
             token_address=os.getenv('STEALTH_TOKEN_ADDRESS', ''),
             dexes=os.getenv('STEALTH_DEXES', 'Raydium,Orca').split(','),
-            wallets=[],
+            wallets=wallets,
             encryption_key=encryption_key,
             model_path=os.getenv('STEALTH_MODEL_PATH', 'mimic_model.pth'),
             config_path=config_path,
@@ -339,12 +348,18 @@ class ConfigManager:
             else:
                 encryption_key = Fernet.generate_key()
 
-            # FIXED: Robust wallets loading - coerce to list if not already
+            # FIXED: Robust wallets loading with type validation
             wallets_raw = config_data.get('wallets')
-            if not isinstance(wallets_raw, list):
-                logger.warning(f"Wallets in config is not a list (got {type(wallets_raw)}), coercing to empty list.")
-                wallets_raw = []
-            wallets = wallets_raw
+            if isinstance(wallets_raw, list):
+                wallets = wallets_raw
+            elif isinstance(wallets_raw, int):
+                logger.warning(f"Wallets in config is an integer (got {wallets_raw}), using empty list")
+                wallets = []
+            elif wallets_raw is None:
+                wallets = []
+            else:
+                logger.warning(f"Wallets in config has unexpected type {type(wallets_raw)}, using empty list")
+                wallets = []
 
             trending_data = config_data.get('trending_config', {})
             trending_config = TrendingConfig(**trending_data)
@@ -364,7 +379,7 @@ class ConfigManager:
                 jupiter_api_key=config_data.get('jupiter_api_key', ''),
                 token_address=config_data.get('token_address', ''),
                 dexes=config_data.get('dexes', ['Raydium', 'Orca']),
-                wallets=wallets,  # Now guaranteed list
+                wallets=wallets,
                 encryption_key=encryption_key,
                 model_path=config_data.get('model_path', 'mimic_model.pth'),
                 config_path=config_path,
@@ -399,7 +414,7 @@ class ConfigManager:
             'jupiter_api_key': config.jupiter_api_key,
             'token_address': config.token_address,
             'dexes': config.dexes,
-            'wallets': config.wallets,  # Guaranteed list
+            'wallets': config.wallets,
             'encryption_key': base58.b58encode(config.encryption_key).decode(),
             'model_path': config.model_path,
             'config_path': config.config_path,
@@ -521,7 +536,7 @@ class ConfigManager:
         logger.info(f"Configuration saved to {config.config_path}")
 
 
-# Encryption Utilities (unchanged)
+# Encryption Utilities
 def encrypt_data(data: str, key: bytes) -> str:
     f = Fernet(key)
     return f.encrypt(data.encode()).decode()
@@ -532,9 +547,9 @@ def decrypt_data(encrypted_data: str, key: bytes) -> str:
     return f.decrypt(encrypted_data.encode()).decode()
 
 
-# Wallet Management (added balance check before funding; added validation)
+# Wallet Management with enhanced type safety
 async def generate_wallets(count: int, config: TradeConfig) -> List[Keypair]:
-    # FIXED: Validate wallets is list before appending
+    # FIXED: Validate and ensure wallets is always a list
     if not isinstance(config.wallets, list):
         logger.warning("Wallets config is not a list; resetting to empty.")
         config.wallets = []
@@ -543,7 +558,7 @@ async def generate_wallets(count: int, config: TradeConfig) -> List[Keypair]:
     for i in range(count):
         wallet = Keypair()
         try:
-            secret_key = wallet.to_bytes()[:32]  # Fixed AttributeError handling
+            secret_key = wallet.to_bytes()[:32]
         except AttributeError:
             secret_key = wallet.to_bytes()[:32]
         encrypted_key = encrypt_data(base58.b58encode(secret_key).decode(), config.encryption_key)
@@ -568,7 +583,7 @@ async def generate_wallets(count: int, config: TradeConfig) -> List[Keypair]:
 
 
 async def load_wallets(config: TradeConfig) -> List[Keypair]:
-    # FIXED: Ensure wallets is list
+    # FIXED: Enhanced type safety for wallets
     if not isinstance(config.wallets, list):
         logger.error("Wallets config is not a list; cannot load.")
         return []
@@ -576,19 +591,24 @@ async def load_wallets(config: TradeConfig) -> List[Keypair]:
     wallets = []
     for wallet_data in config.wallets:
         try:
+            if not isinstance(wallet_data, dict):
+                logger.warning(f"Skipping invalid wallet data: {type(wallet_data)}")
+                continue
+                
             if config.security.enable_encryption:
                 private_key = decrypt_data(wallet_data['private_key'], config.encryption_key)
             else:
                 private_key = wallet_data['private_key']
             secret_key = base58.b58decode(private_key)
-            wallet = Keypair.from_bytes(secret_key)  # Updated to from_bytes for compatibility
+            wallet = Keypair.from_bytes(secret_key)
             wallets.append(wallet)
         except Exception as e:
             logger.error(f"Failed to load wallet {wallet_data.get('public_key', 'unknown')}: {e}")
     logger.info(f"Loaded {len(wallets)} wallets from config")
     return wallets
 
-# Jupiter Lite API Client (updated rate limit handling, added headers if key present)
+
+# Jupiter Lite API Client
 class JupiterLiteClient:
     def __init__(self, session: aiohttp.ClientSession, config: TradeConfig):
         self.session = session
@@ -764,7 +784,8 @@ class JupiterLiteClient:
             logger.error(f"Tokens API request failed: {e}")
             return []
 
-# Wallet Utilities (added better error handling)
+
+# Wallet Utilities
 async def transfer_sol(wallet: Keypair, to_pubkey: Pubkey, amount_lamports: int, rpc_url: str) -> bool:
     try:
         async with AsyncClient(rpc_url) as client:
@@ -797,6 +818,7 @@ async def transfer_sol(wallet: Keypair, to_pubkey: Pubkey, amount_lamports: int,
         logger.error(f"SOL transfer error: {e}")
         return False
 
+
 async def transfer_spl_token(wallet: Keypair, to_pubkey: Pubkey, token_mint: str, amount: int, decimals: int,
                             rpc_url: str) -> bool:
     try:
@@ -807,7 +829,7 @@ async def transfer_spl_token(wallet: Keypair, to_pubkey: Pubkey, token_mint: str
                 logger.error("Failed to get associated token accounts")
                 return False
             balance_resp = await client.get_token_account_balance(Pubkey.from_string(from_ata))
-            if not balance_resp.value or int(balance_resp.value.amount) < amount:  # Fixed type
+            if not balance_resp.value or int(balance_resp.value.amount) < amount:
                 logger.error(f"Wallet {wallet.pubkey()} has insufficient token balance")
                 return False
             blockhash_resp = await client.get_latest_blockhash()
@@ -839,6 +861,7 @@ async def transfer_spl_token(wallet: Keypair, to_pubkey: Pubkey, token_mint: str
         logger.error(f"SPL token transfer error: {e}")
         return False
 
+
 async def get_associated_token_account(pubkey: Pubkey, mint: str, payer: Keypair, client: AsyncClient) -> Optional[str]:
     try:
         token = Token(client, Pubkey.from_string(mint), TOKEN_PROGRAM_ID, payer)
@@ -846,13 +869,14 @@ async def get_associated_token_account(pubkey: Pubkey, mint: str, payer: Keypair
         if not balance_resp.value or balance_resp.value < 2039280:
             logger.error(f"Payer {payer.pubkey()} has insufficient SOL for ATA creation")
             return None
-        ata, _ = token.get_associated_token_address(pubkey)  # Updated call for compatibility if needed
+        ata, _ = token.get_associated_token_address(pubkey)
         return str(ata)
     except Exception as e:
         logger.error(f"Failed to get associated token account for {pubkey}: {e}")
         return None
 
-# Advanced AMM (fixed negative inventory)
+
+# Advanced AMM with negative inventory fix
 class AdvancedAMM:
     def __init__(self, config: TradeConfig, jupiter_client: JupiterLiteClient):
         self.config = config
@@ -1071,7 +1095,8 @@ class AdvancedAMM:
         metrics['runtime_hours'] = (time.time() - metrics['start_time']) / 3600
         return metrics
 
-# Enhanced Trading Engine with Trending Optimization (unchanged, as no bugs reported)
+
+# Enhanced Trading Engine with Trending Optimization
 class StealthVolumeEngine:
     def __init__(self, config: TradeConfig):
         self.config = config
@@ -1090,7 +1115,7 @@ class StealthVolumeEngine:
         self.amm = AdvancedAMM(self.config, self.jupiter_client)
         logger.info("StealthVolume engine initialized with Jupiter Lite API")
 
-    # Trending Optimization Methods (unchanged)
+    # Trending Optimization Methods
     def _get_trade_size_by_distribution(self) -> float:
         rand = random.random()
         trending_config = self.config.trending_config
@@ -1293,7 +1318,7 @@ class StealthVolumeEngine:
         logger.info(f"Volume/Hour: {self.trending_metrics['total_volume_generated']/(runtime/3600):.2f} SOL")
         logger.info("=" * 60)
 
-    # Core Trading Methods (added wallet balance check)
+    # Core Trading Methods
     async def run_hybrid_market_making(self, duration_hours: int = 24):
         logger.info(f"Starting hybrid market making for {duration_hours} hours")
         self.is_running = True
@@ -1320,7 +1345,7 @@ class StealthVolumeEngine:
                 # Check wallet balance before trade
                 async with AsyncClient(self.config.rpc_url) as client:
                     balance = await client.get_balance(wallet.pubkey())
-                    if balance.value < 1000000:  # Min for fees
+                    if balance.value < 1000000:
                         logger.warning(f"Skipping trade for wallet {wallet.pubkey()}: insufficient SOL")
                         continue
                 success = await self.amm.execute_trade(wallet, trade_type, amount)
@@ -1593,12 +1618,14 @@ class StealthVolumeEngine:
         self.is_running = False
         logger.info("Trading engine stopping...")
 
-# CLI Commands (updated version)
+
+# CLI Commands
 @click.group()
-@click.version_option(version='4.2.0')
+@click.version_option(version='4.2.2')
 def cli():
     """StealthVolume CLI - Advanced Solana Trading Bot"""
     pass
+
 
 @cli.command()
 @click.option('--config-path', default='config.yaml', help='Path to config file')
@@ -1608,6 +1635,7 @@ def init(config_path: str):
     ConfigManager.save_config(config)
     logger.info(f"Configuration initialized at {config_path}")
     logger.info("Edit the configuration file and generate wallets before trading")
+
 
 @cli.command()
 @click.option('--config-path', default='config.yaml', help='Path to config file')
@@ -1621,6 +1649,7 @@ def generate_wallets(config_path: str, count: int):
         config.wallets = []
     asyncio.run(generate_wallets(count, config))
     logger.info(f"Generated {count} wallets")
+
 
 @cli.command()
 @click.option('--config-path', default='config.yaml', help='Path to config file')
@@ -1637,6 +1666,7 @@ def hybrid_mm(config_path: str, duration: int):
         engine.stop()
     except Exception as e:
         logger.error(f"Strategy failed: {e}")
+
 
 @cli.command()
 @click.option('--config-path', default='config.yaml', help='Path to config file')
@@ -1655,6 +1685,7 @@ def hybrid_mm_auto(config_path: str):
         engine.stop()
     except Exception as e:
         logger.error(f"Hybrid MM failed: {e}")
+
 
 @cli.command()
 @click.option('--config-path', default='config.yaml', help='Path to config file')
@@ -1678,6 +1709,7 @@ def boost_volume(config_path: str, token: str, use_random_amount: bool, amount: 
         engine.stop()
     except Exception as e:
         logger.error(f"Volume boosting failed: {e}")
+
 
 @cli.command()
 @click.option('--config-path', default='config.yaml', help='Path to config file')
@@ -1721,6 +1753,7 @@ def boost_volume_auto(config_path: str):
     except Exception as e:
         logger.error(f"Volume boosting failed: {e}")
 
+
 @cli.command()
 @click.option('--config-path', default='config.yaml', help='Path to config file')
 @click.option('--input-mint', required=True, help='Input token mint address')
@@ -1754,6 +1787,7 @@ def swap(config_path: str, input_mint: str, output_mint: str, amount: float, sli
                 logger.error("Swap execution failed")
     asyncio.run(execute_swap())
 
+
 @cli.command()
 @click.option('--config-path', default='config.yaml', help='Path to config file')
 @click.option('--count', type=int, default=50, help='Number of wallets to use for holder simulation')
@@ -1771,6 +1805,7 @@ def add_holders(config_path: str, count: int, min_amount: float, max_amount: flo
         engine.stop()
     except Exception as e:
         logger.error(f"Holder simulation failed: {e}")
+
 
 @cli.command()
 @click.option('--config-path', default='config.yaml', help='Path to config file')
@@ -1793,10 +1828,12 @@ def add_holders_auto(config_path: str):
     except Exception as e:
         logger.error(f"Holder simulation failed: {e}")
 
+
 @cli.command()
 def show_main_private():
     """Display main wallet private key (use with caution)"""
     logger.warning("This command has been removed for security reasons. Use environment variables instead.")
+
 
 @cli.command()
 @click.option('--config-path', default='config.yaml', help='Path to config file')
@@ -1815,6 +1852,7 @@ def withdraw(config_path: str, token_mint: Optional[str], amount: Optional[float
         engine.stop()
     except Exception as e:
         logger.error(f"Withdrawal failed: {e}")
+
 
 @cli.command()
 @click.option('--config-path', default='config.yaml', help='Path to config file')
@@ -1841,6 +1879,7 @@ def withdraw_auto(config_path: str):
     except Exception as e:
         logger.error(f"Withdrawal failed: {e}")
 
+
 @cli.command()
 @click.option('--config-path', default='config.yaml', help='Path to config file')
 def all_auto(config_path: str):
@@ -1855,6 +1894,7 @@ def all_auto(config_path: str):
         engine.stop()
     except Exception as e:
         logger.error(f"All-auto strategy failed: {e}")
+
 
 @cli.command()
 @click.option('--config-path', default='config.yaml', help='Path to config file')
@@ -1871,13 +1911,14 @@ def trending_optimized(config_path: str):
     except Exception as e:
         logger.error(f"Trending strategy failed: {e}")
 
+
 @cli.command()
 @click.option('--config-path', default='config.yaml', help='Path to config file')
 def status(config_path: str):
     """Display current bot status and configuration"""
     config = ConfigManager.load_config('yaml', config_path)
     logger.info("=" * 60)
-    logger.info("STEALTHVOLUME STATUS - v4.2.0")
+    logger.info("STEALTHVOLUME STATUS - v4.2.2")
     logger.info("=" * 60)
     logger.info(f"RPC URL: {config.rpc_url}")
     logger.info(f"Token Address: {config.token_address}")
@@ -1917,16 +1958,17 @@ def status(config_path: str):
     
     logger.info("=" * 60)
 
+
 if __name__ == '__main__':
     print("=" * 70)
-    print("🚀 STEALTHVOLUME CLI v4.2.0 - TRENDING OPTIMIZED (Updated Oct 2025)")
+    print("🚀 STEALTHVOLUME CLI v4.2.2 - TRENDING OPTIMIZED (Updated Oct 2025)")
     print("=" * 70)
     print("CHANGES:")
-    print("  - Removed hardcoded wallet secret for security")
+    print("  - Fixed 'int object is not iterable' error in wallet handling")
+    print("  - Enhanced type safety for wallet lists")
+    print("  - Improved config validation and error handling")
     print("  - Updated Jupiter API versions per 2025 docs")
     print("  - Fixed negative inventory in AMM")
-    print("  - Added API key support for pro endpoints")
-    print("  - Improved error handling and balance checks")
     print("")
     print("COMMANDS:")
     print("  init                 - Initialize configuration")
@@ -1949,4 +1991,6 @@ if __name__ == '__main__':
         cli()
     except Exception as e:
         logger.error(f"CLI execution failed: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
